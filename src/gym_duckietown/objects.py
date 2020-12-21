@@ -1,13 +1,11 @@
 # coding=utf-8
 import math
-from typing import Dict, Tuple
+from typing import Tuple, Dict
 
 import numpy as np
 from pyglet import gl
 from pyglet.gl import gluNewQuadric, gluSphere
 
-from duckietown_world import MapFormat1Constants
-from duckietown_world.resources import get_resource_path
 from .collision import (
     agent_boundbox,
     calculate_safety_radius,
@@ -17,18 +15,16 @@ from .collision import (
     intersects_single_obj,
 )
 from .graphics import load_texture, rotate_point
-from .objmesh import ObjMesh
+from .utils import get_file_path
 
 
 class WorldObj:
     visible: bool
-    color: Tuple[float, float, float, float]
+    color: Tuple[float, float, float]
     safety_radius_mult: float
 
     obj_corners: np.array
     obj_norm: np.array
-    mesh: ObjMesh
-    kind: MapFormat1Constants.ObjectKind
 
     def __init__(self, obj, domain_rand: bool, safety_radius_mult: float):
         """
@@ -38,23 +34,13 @@ class WorldObj:
         # (Static analysis complains)
         self.visible = True
         # same
-        self.color = (0, 0, 0, 1)
+        self.color = (0, 0, 0)
         # maybe have an abstract method is_visible, get_color()
 
-        self.kind = obj["kind"]
-        self.mesh = obj["mesh"]
-        self.pos = obj["pos"]
-        self.scale = obj["scale"]
-        # self.y_rot =
-        self.optional = obj["optional"]
-        self.min_coords = obj["mesh"].min_coords
-        self.max_coords = obj["mesh"].max_coords
-        self.static = obj["static"]
-        self.safety_radius = safety_radius_mult * calculate_safety_radius(self.mesh, self.scale)
+        self.process_obj_dict(obj, safety_radius_mult)
 
         self.domain_rand = domain_rand
-        self.angle = obj["angle"]
-        self.y_rot = np.rad2deg(self.angle)
+        self.angle = self.y_rot * (math.pi / 180)
 
         #  Find corners and normal vectors assoc w. object
         self.obj_corners = generate_corners(
@@ -65,19 +51,31 @@ class WorldObj:
         self.x_rot = 0  # Niki-added
         self.z_rot = 0  # Niki-added
 
+    def process_obj_dict(self, obj, safety_radius_mult):
+        self.kind = obj["kind"]
+        self.mesh = obj["mesh"]
+        self.pos = obj["pos"]
+        self.scale = obj["scale"]
+        self.y_rot = obj["y_rot"]
+        self.optional = obj["optional"]
+        self.min_coords = obj["mesh"].min_coords
+        self.max_coords = obj["mesh"].max_coords
+        self.static = obj["static"]
+        self.safety_radius = safety_radius_mult * calculate_safety_radius(self.mesh, self.scale)
+
     def render_mesh(self, segment: bool, enable_leds: bool):
         self.mesh.render(segment=segment)
-        if enable_leds and self.kind == MapFormat1Constants.KIND_DUCKIEBOT:
+        if enable_leds and self.kind in ["duckiebot", "duckiebot-player"]:
             # attrs =
             # gl.glPushAttrib(gl.GL_ALL_ATTRIB_BITS)
             s_main = 0.01  # 1 cm sphere
             # LIGHT_MULT_MAIN = 10
             s_halo = 0.04
-            height = 0.05
+            height = 0.04
             positions = {
                 "front_left": [0.1, -0.05, height],
                 "front_right": [0.1, +0.05, height],
-                "center": [0.1, +0.0, height],
+                "center": [0.1, +0, height],
                 "back_left": [-0.1, -0.05, height],
                 "back_right": [-0.1, +0.05, height],
             }
@@ -92,15 +90,15 @@ class WorldObj:
                     "back_right": (0, 0, 1),
                 }
             for light_name, (px, py, pz) in positions.items():
-                color = np.clip(colors[light_name], 0, +1)
+                color = colors[light_name]
                 color_intensity = float(np.mean(color))
                 gl.glPushMatrix()
 
                 gl.glTranslatef(px, pz, py)
 
                 gl.glEnable(gl.GL_BLEND)
-                # gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
-                gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
+                gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+                # gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE)
 
                 sphere = gluNewQuadric()
 
@@ -113,8 +111,8 @@ class WorldObj:
 
                 gluSphere(sphere, s_halo_effective, 10, 10)
 
-                gl.glColor4f(1.0, 1.0, 1.0, 1.0)
-                gl.glBlendFunc(gl.GL_ONE, gl.GL_ZERO)
+                # gl.glColor4f(1.0, 1.0, 1.0, 1.0)
+                # gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
                 gl.glDisable(gl.GL_BLEND)
 
                 gl.glPopMatrix()
@@ -141,9 +139,9 @@ class WorldObj:
         gl.glTranslatef(*self.pos)
         gl.glScalef(self.scale, self.scale, self.scale)
         gl.glRotatef(self.x_rot, 1, 0, 0)  # Niki-added
-        gl.glRotatef(self.y_rot, 0, 1, 0)
+        gl.glRotatef(self.y_rot+180, 0, 1, 0)
         gl.glRotatef(self.z_rot, 0, 0, 1)  # Niki-added
-        gl.glColor4f(*self.color)
+        gl.glColor3f(*self.color)
         self.render_mesh(segment, enable_leds=enable_leds)
         gl.glPopMatrix()
 
@@ -436,8 +434,8 @@ class TrafficLightObj(WorldObj):
         WorldObj.__init__(self, obj, domain_rand, safety_radius_mult)
 
         self.texs = [
-            load_texture(get_resource_path("trafficlight_card0.jpg")),
-            load_texture(get_resource_path("trafficlight_card1.jpg")),
+            load_texture(get_file_path("textures", "trafficlight_card0", "jpg")),
+            load_texture(get_file_path("textures", "trafficlight_card1", "jpg")),
         ]
         self.time = 0
 
@@ -614,3 +612,7 @@ def get_right_vec(angle: float) -> np.ndarray:
     x = math.sin(angle)
     z = math.cos(angle)
     return np.array([x, 0, z])
+    
+    
+class FakeDuckiebotObj(DuckiebotObj):
+    pass

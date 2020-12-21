@@ -1,6 +1,7 @@
 # coding=utf-8
 import os
-from typing import cast, Dict, TypedDict
+from typing import cast, Dict
+from typing_extensions import TypedDict
 
 import numpy as np
 import pyglet
